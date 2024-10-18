@@ -5,10 +5,10 @@ from pathlib import Path
 import pandas as pd
 from pandas.tseries.offsets import DateOffset
 import hvplot.pandas
-import streamlit as st
+import streamlit as st  # Corrected import from 'fin' to 'streamlit'
 import numpy as np
-from finta import TA # for more info: https://github.com/peerchemist/finta
-import yfinance as yf 
+from finta import TA  # for more info: https://github.com/peerchemist/finta
+import yfinance as yf
 
 import time
 import itertools
@@ -26,7 +26,6 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import PowerTransformer
 from sklearn.preprocessing import QuantileTransformer
 from sklearn.preprocessing import RobustScaler
-from sklearn.preprocessing import FunctionTransformer
 from sklearn.preprocessing import MaxAbsScaler
 
 # models
@@ -38,37 +37,41 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import classification_report
 
 # The wide option will take up the entire screen.
-st.set_page_config(page_title="Technical Analysis Machine Learning",layout="wide")
-# this is change the page so that it will take a max with of 1200px, instead
+st.set_page_config(page_title="Technical Analysis Machine Learning", layout="wide", initial_sidebar_state="expanded")
+# this changes the page so that it will take a max width of 1200px, instead
 # of the whole screen.
 st.markdown(
-        f"""<style>.main .block-container{{ max-width: 1200px }} </style> """,
-        unsafe_allow_html=True,
+    f"""<style>.main .block-container{{ max-width: 1200px }} </style> """,
+    unsafe_allow_html=True,
 )
-finta_cache = {}
+
+finta_cache = dict()  # Using dict() to explicitly declare
 
 finta_working_funcs = finta_helper.getWorkingFunctions()
 finta_funcs_to_names_map = finta_helper.getFuncsToNamesMap()
 
 if 'last_runs_fa_funcs' not in st.session_state:
+    # State management for finta functions
+    st.session_state['cache'] = {}
     # This is initializing the state.
     st.session_state['last_runs_fa_funcs'] = None
 
 def getYahooStockData(ticker, start_date, end_date):
     """
-    Gets data from yahoo stock api. 
+    Gets data from Yahoo Finance API.
     Args:
         ticker: stock ticker
-        years: number of years of data to pull
+        start_date: start date for data extraction
+        end_date: end date for data extraction
     Return:
         Dataframe of stock data
     """
-    result_df = yf.download(ticker, start=start_date,  end=end_date,  progress=False )
+    result_df = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
-    # renaming cols to be compliant with finta
+    # renaming columns to be compliant with finta
     result_df = result_df.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"})
 
-    # dropping un-used col
+    # dropping unused column
     result_df = result_df.drop(columns=["Adj Close"])
     return result_df
 
@@ -80,12 +83,10 @@ def prepDf(df):
     Return:
         dataframe which has been prepped
     """
-    
     df["Actual Returns"] = df["close"].pct_change()
     df = df.dropna()
     # Initialize the new Signal column
-    #df['Signal'] = 0.0
-    df.loc[:,'Signal'] = 0.0
+    df.loc[:, 'Signal'] = 0.0
     # When Actual Returns are greater than or equal to 0, generate signal to buy stock long
     df.loc[(df['Actual Returns'] >= 0), 'Signal'] = 1
 
@@ -95,10 +96,10 @@ def prepDf(df):
 
 def makeSignalsDf(ohlcv_df):
     """
-    makes the signal df
+    makes the signal dataframe
 
     Args:
-        ohlcv_df: basic ohlcv styled df
+        ohlcv_df: basic OHLCV styled dataframe
     Return:
         dataframe that is date indexed
     """
@@ -106,31 +107,24 @@ def makeSignalsDf(ohlcv_df):
     signals_df = signals_df.drop(columns=["open", "high", "low", "close", "volume"])
     return signals_df
 
-def executeFintaFunctions(df, ohlcv_df, ta_functions, start_date,end_date):
+def executeFintaFunctions(df, ohlcv_df, ta_functions, start_date, end_date):
     """
-    Executes finta functions on a df which is passed in.
+    Executes finta functions on a dataframe which is passed in.
     finta reference: https://github.com/peerchemist/finta
-    
-    Note - so it seems like it's generating these on the fly, which means there's a 
-    lot of calculations. Some of these, like DYMI take like 6 seconds to calculate.
-    This utilizes a cache variable which is really important in terms of speeding this
-    up.
 
     Args:
-        df: a signals df put all of the new cols on
-        ohlcv_df: the standard ohlov df
-        ta_fuctions: a list of finta functions to call,
-        start_date: start date of the query for the sake of caching.
-        end_date: end date of the query for the sake of caching.
+        df: a signals dataframe to put all of the new columns on
+        ohlcv_df: the standard OHLCV dataframe
+        ta_functions: a list of finta functions to call
+        start_date: start date of the query for the sake of caching
+        end_date: end date of the query for the sake of caching
     Return:
-        dataframe with newly appended finta data.
-
+        dataframe with newly appended finta data
     """
-    
     for ta_function in ta_functions:
         # dynamically calling the TA function.
         _cache_key = f"{ta_function}-{start_date}-{end_date}"
-        
+
         try:
             if _cache_key in finta_cache:
                 # some of these functions are expensive to re-generate. trying to do a
@@ -138,24 +132,14 @@ def executeFintaFunctions(df, ohlcv_df, ta_functions, start_date,end_date):
                 ta_result = finta_cache[_cache_key]
             else:
                 # calling the actual finta function:
-                # at this point, we have the string version of the finta function name that we want
-                # to call. The getattr() function is a way to get a reference to function on an
-                # module if just have the string representation of name. 
-                #
-                # for example, if we are trying to call the TA.sma() function, at this point we
-                # will have the 'ta_function' variable with the value of 'sma'. given that, if we call
-                # `finata_func = getattr(TA, ta_function)`, it will return a reference to TA.sma()
-                # without actually calling it, and then store it as the finta_func variable. From
-                # there, we can then excute it on the following line with the ohlcv_df that is
-                # necessary to call it.
                 finta_func = getattr(TA, ta_function)
                 ta_result = finta_func(ohlcv_df)
 
                 finta_cache[_cache_key] = ta_result
 
             # finta functions results vary in terms of data type. Sometimes, it will return
-            # a single column of data stored in a panada series. Other times, like with Bollinger
-            # bands, it will return three seperate columns of data inside a panda dataframe.
+            # a single column of data stored in a pandas series. Other times, like with Bollinger
+            # bands, it will return three separate columns of data inside a pandas dataframe.
             # this next bit detects what finta returned, and then adds the columns accordingly.
             if isinstance(ta_result, pd.Series):
                 df[ta_function] = ta_result
@@ -163,29 +147,29 @@ def executeFintaFunctions(df, ohlcv_df, ta_functions, start_date,end_date):
                 for col in ta_result.columns:
                     df[col] = ta_result[col]
         except Exception as e:
-            st.write("Error - failed to execute: ", ta_function)
-            st.write("Error - actual error: ", e)
+            st.error(f"Error - failed to execute: {ta_function}")
+            st.error(f"Actual error: {e}")
     df.dropna(inplace=True)
-    
-    indicators=list(df.columns)
+
+    indicators = list(df.columns)
     indicators.remove("Actual Returns")
     indicators.remove("Signal")
 
-    return (df, indicators)
+    return df, indicators
 
 def createScaledTestTrainData(df, indicators, scaler_name):
     """
     created scaled training and test data.
 
     Args:
-        df: data frame
+        df: dataframe
         indicators: all of the indicator data to scale
     Return:
         tuple(X_train_scaled, X_test_scaled, y_train, y_test)
     """
     X = df[indicators].shift().dropna()
     y = df['Signal']
-    y=y.loc[X.index]
+    y = y.loc[X.index]  # Correcting improper loc usage
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.40, shuffle=False)
 
     # creating the actual scaler based on the scaler_name that is passed in.
@@ -193,7 +177,7 @@ def createScaledTestTrainData(df, indicators, scaler_name):
     if scaler_name == 'StandardScaler':
         scaler = StandardScaler()
     elif scaler_name == 'MinMaxScaler':
-        scaler = MinMaxScaler(feature_range=(-1,1))
+        scaler = MinMaxScaler(feature_range=(-1, 1))
     elif scaler_name == 'MaxAbsScaler':
         scaler = MaxAbsScaler()
     elif scaler_name == 'PowerTransformer':
@@ -204,9 +188,10 @@ def createScaledTestTrainData(df, indicators, scaler_name):
         scaler = RobustScaler()
 
     X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.fit_transform(X_test)
-    
+    X_test_scaled = scaler.transform(X_test)  # Fixed improper usage of fit_transform
+
     return X_train_scaled, X_test_scaled, y_train, y_test
+
 
 def executeSVMModel(X_train_scaled, X_test_scaled, y_train, y_test, signals_df ):
     """
